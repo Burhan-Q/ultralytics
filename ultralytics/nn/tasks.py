@@ -222,7 +222,8 @@ class DetectionModel(BaseModel):
     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
         """Initialize the YOLOv8 detection model with the given config and parameters."""
         super().__init__()
-        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        # self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        self.yaml = cfg if isinstance(cfg, dict) else model_arrangement(*cfg_parts(cfg))  # cfg dict
 
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
@@ -310,7 +311,8 @@ class PoseModel(DetectionModel):
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         """Initialize YOLOv8 Pose model."""
         if not isinstance(cfg, dict):
-            cfg = yaml_model_load(cfg)  # load model YAML
+            # cfg = yaml_model_load(cfg)  # load model YAML
+            cfg = model_arrangement(*cfg_parts(cfg))  # load model YAML
         if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg['kpt_shape']):
             LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with kpt_shape={data_kpt_shape}")
             cfg['kpt_shape'] = data_kpt_shape
@@ -331,7 +333,8 @@ class ClassificationModel(BaseModel):
 
     def _from_yaml(self, cfg, ch, nc, verbose):
         """Set YOLOv8 model configurations and define the model architecture."""
-        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        # self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        self.yaml = cfg if isinstance(cfg, dict) else model_arrangement(*cfg_parts(cfg))  # cfg dict
 
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
@@ -728,6 +731,56 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
+def cfg_parts(path):
+    """Breaks apart YAML config filename argument into components, returns file path (`Path`), model-type (`str`), model-version (`str`), model-size (`str`), and modifiers (`list`)"""
+    import re
+    path = Path(path)
+    yoloRGX = r"(yolov)([3|5|6|8]){1}([nsmlx]{1})?(\-\w{3,})?(\-p[2|6])?"
+    rtdetrRGX = r"(rtdetr)(\-[a-zA-z]+)(\d+)?"
+    model = ver = size = mods = None
+
+    if path.stem in (f'yolov{d}{x}6' for x in 'nsmlx' for d in (5, 8)):
+        new_stem = re.sub(r'(\d+)([nslmx])6(.+)?$', r'\1\2-p6\3', path.stem)
+        LOGGER.warning(f'WARNING ⚠️ Ultralytics YOLO P6 models now use -p6 suffix. Renaming {path.stem} to {new_stem}.')
+        path = path.with_name(new_stem + path.suffix)
+
+    parsed_name = re.search(yoloRGX, path.stem, re.IGNORECASE)
+    model, ver, size, *mods = parsed_name.groups() if parsed_name is not None else (None,) * 4
+    if not any([ver,size,*mods]):
+        parsed_name = re.search(rtdetrRGX, path.stem, re.IGNORECASE)
+        model, *mods = parsed_name.groups() if parsed_name is not None else (None,) * 2
+    
+    path = Path(''.join([p for p in [model, ver, mods[0], path.suffix] if p is not None]))
+
+    return path, model, ver, size, mods
+
+def model_arrangement(file, m, v, s, modifiers=[]):
+    """Builds model dictionary using YAML file and known configurations."""
+    file = Path(file)
+    try:
+        yaml_name = ''.join([p for p in [m, v, modifiers[0], file.suffix] if p is not None])
+        yaml_file = check_yaml(yaml_name,hard=False) or check_yaml(file)
+    except FileNotFoundError:
+        yaml_name = ''.join([p for p in [m, v, file.suffix] if p is not None]) # try without modifier
+        yaml_file = check_yaml(yaml_name,hard=False) or check_yaml(file)
+    y = yaml_load(yaml_file).copy()
+    # Specific config
+    cfg = ''.join([p for p in [m,v,*modifiers] if p is not None])
+    net, order = y[cfg], y['mappings'].get(cfg)
+    model = {'yaml_file':str(file)}
+    _ = model.update({x:y.get(x) for x in ('nc', 'activation', 'scales')})
+    model['scale'] = s if not None else ''
+    model['cfg'] = cfg
+    # Model arrangement
+    for o in order:
+        if isinstance(o, list): # neck
+            model['head'] = [l for v in o for l in net.get('neck')[v]]
+        elif o.lower() == 'head': # head
+            model['head'] = model.get('head',[]) + [net.get(o)]
+        elif o.lower() == 'backbone': 
+            model[o] = net[o]
+    
+    return model.copy()
 
 def yaml_model_load(path):
     """Load a YOLOv8 model from a YAML file."""
@@ -738,14 +791,13 @@ def yaml_model_load(path):
         new_stem = re.sub(r'(\d+)([nslmx])6(.+)?$', r'\1\2-p6\3', path.stem)
         LOGGER.warning(f'WARNING ⚠️ Ultralytics YOLO P6 models now use -p6 suffix. Renaming {path.stem} to {new_stem}.')
         path = path.with_name(new_stem + path.suffix)
-
+    
     unified_path = re.sub(r'(\d+)([nslmx])(.+)?$', r'\1\3', str(path))  # i.e. yolov8x.yaml -> yolov8.yaml
     yaml_file = check_yaml(unified_path, hard=False) or check_yaml(path)
     d = yaml_load(yaml_file)  # model dict
     d['scale'] = guess_model_scale(path)
     d['yaml_file'] = str(path)
     return d
-
 
 def guess_model_scale(model_path):
     """
@@ -763,7 +815,6 @@ def guess_model_scale(model_path):
         import re
         return re.search(r'yolov\d+([nslmx])', Path(model_path).stem).group(1)  # n, s, m, l, or x
     return ''
-
 
 def guess_model_task(model):
     """
