@@ -238,7 +238,7 @@ def time_sync():
 
 
 def fuse_conv_and_bn(conv, bn):
-    """Fuse Conv2d() and BatchNorm2d() layers https://tehnokv.com/posts/fusing-batchnorm-and-conv/."""
+    """Fuse Conv2d() and BatchNorm2d() layers."""
     fusedconv = (
         nn.Conv2d(
             conv.in_channels,
@@ -260,7 +260,11 @@ def fuse_conv_and_bn(conv, bn):
     fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
 
     # Prepare spatial bias
-    b_conv = torch.zeros(conv.weight.shape[0], device=conv.weight.device) if conv.bias is None else conv.bias
+    b_conv = (
+        torch.zeros(conv.weight.shape[0], dtype=conv.weight.dtype, device=conv.weight.device)
+        if conv.bias is None
+        else conv.bias
+    )
     b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
     fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
 
