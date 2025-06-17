@@ -142,6 +142,7 @@ version = { attr = "ultralytics.__version__" }
 addopts = "--doctest-modules --durations=30 --color=yes"
 markers = [
     "slow: skip slow tests unless --slow is set",
+    "serial: mark test to run serially (not compatible with pytest-xdist parallel execution)",
 ]
 norecursedirs = [".git", "dist", "build"]
 
