@@ -191,11 +191,32 @@ jobs:
           if [[ "${{ github.event_name }}" =~ ^(schedule|workflow_dispatch)$ ]]; then
               slow="pycocotools mlflow"
           fi
-          uv pip install --system -e ".[export,solutions]" $torch $slow pytest-cov --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+          uv pip install --system -e ".[export,solutions]" $torch $slow pytest pytest-cov pytest-xdist --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
       - name: Check environment
         run: |
           yolo checks
           uv pip list
+      - name: Run parallelizable tests
+        run: |
+          slow=""
+          if [[ "${{ github.event_name }}" =~ ^(schedule|workflow_dispatch)$ ]]; then
+              slow="--slow"
+          fi
+          pytest $slow -n auto -m "not serial" --cov=ultralytics --cov-report=xml:coverage-parallel.xml tests/
+
+      - name: Run serial tests
+        run: |
+          slow=""
+          if [[ "${{ github.event_name }}" =~ ^(schedule|workflow_dispatch)$ ]]; then
+              slow="--slow"
+          fi
+          pytest $slow -m serial --cov=ultralytics --cov-report=xml:coverage-serial.xml tests/
+
+      - name: Combine coverage reports
+        run: |
+          coverage combine coverage-parallel.xml coverage-serial.xml
+          coverage xml -o coverage.xml
+      
       - name: Pytest tests
         shell: bash # for Windows compatibility
         run: |
