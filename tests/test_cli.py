@@ -24,6 +24,7 @@ def test_special_modes() -> None:
     run("yolo cfg")
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("task,model,data", TASK_MODEL_DATA)
 def test_train(task: str, model: str, data: str) -> None:
     """Test YOLO training for different tasks, models, and datasets."""
