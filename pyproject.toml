@@ -126,6 +126,7 @@ typing = [
     "types-requests",
     "types-shapely",
 ]
+full = ["ultralytics[export,extra,logging,solutions,typing]"]
 
 [project.urls]
 "Homepage" = "https://ultralytics.com"
